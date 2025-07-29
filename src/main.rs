@@ -1,15 +1,13 @@
 use std::ops::Deref;
 use rayon::prelude::*;
 use pdf::object::Resolve;
-use image::{ImageBuffer, RgbaImage, RgbImage};
+use image::{ImageBuffer, Rgb};
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use clap::Parser;
 
-use std::path::{Path, PathBuf};
-
-use image::Rgb;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 struct Args {
@@ -42,7 +40,7 @@ fn main() -> Result<(), String> {
 
     let out_directory = std::path::PathBuf::from(file_name);
     if !out_directory.exists() {
-        std::fs::create_dir(&out_directory);
+        std::fs::create_dir(&out_directory).unwrap();
     }
 
     let mut out_directory_entries = vec![];
@@ -150,7 +148,8 @@ fn main() -> Result<(), String> {
                     image::codecs::png::CompressionType::Fast,
                     image::codecs::png::FilterType::Adaptive,
                 )
-            );
+            ).unwrap();
+
         } else {
             eprintln!(
                 "would write image {} from page {} to {:?}",
