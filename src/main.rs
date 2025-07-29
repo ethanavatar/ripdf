@@ -5,7 +5,19 @@ use image::{ImageBuffer, RgbaImage, RgbImage};
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use clap::Parser;
+
+use std::path::{Path, PathBuf};
+
 use image::Rgb;
+
+#[derive(Parser)]
+struct Args {
+    input_pdf: PathBuf,
+
+    #[clap(long)]
+    dry_run: bool,
+}
 
 struct PageImage {
     page_number: usize,
@@ -21,9 +33,32 @@ struct ProcessedImage {
     data: ImageBuffer<Rgb<u8>, Arc<[u8]>>,
 }
 
-fn main() {
-    let file_name = "10AE_Promo_Book";
-    let in_path = std::path::PathBuf::from(file_name.to_owned() + ".pdf");
+fn main() -> Result<(), String> {
+    let args = Args::parse();
+
+    let mut file_name = args.input_pdf.clone();
+    file_name.set_extension("");
+    let file_name = file_name.as_path().file_name().unwrap().to_str().unwrap();
+
+    let out_directory = std::path::PathBuf::from(file_name);
+    if !out_directory.exists() {
+        std::fs::create_dir(&out_directory);
+    }
+
+    let mut out_directory_entries = vec![];
+
+    for entry in std::fs::read_dir(&out_directory).unwrap() {
+        match entry {
+            Ok(dir) => out_directory_entries.push(dir.path()),
+            _ => continue,
+        }
+    }
+
+    if out_directory_entries.len() > 0 {
+        return Err(format!("Output directory {} is not empty", out_directory.display()));
+    }
+
+    let in_path = args.input_pdf.clone();
     let file = pdf::file::FileOptions::cached().open(&in_path).expect("Failed to open file");
 
     let resolver = Arc::new(Mutex::new(file.resolver()));
@@ -54,16 +89,12 @@ fn main() {
                 _ => unreachable!(),
             };
 
-            println!("getting data for image {} on page {}", object_number, page_number);
-
             let dict = image.deref().to_owned();
             let image_data = {
                 let resolver = resolver.clone();
                 let resolver = resolver.lock().unwrap();
                 image.image_data(&*resolver).unwrap()
             };
-
-            println!("got data for image {} on page {}", object_number, page_number);
 
             images.push(PageImage {
                 page_number: *page_number,
@@ -81,14 +112,10 @@ fn main() {
 
     for images in page_images {
        let batch: Vec<_> = images.par_iter().map(|image| {
-            println!("copying data for image {} on page {}", image.object_number, image.page_number);
-
             let rgb: ImageBuffer<Rgb<u8>, Arc<[u8]>> = ImageBuffer::from_raw(
                 image.width, image.height,
                 image.data.clone()
             ).unwrap();
-
-            println!("copied data for image {} on page {}", image.object_number, image.page_number);
 
             ProcessedImage {
                 page_number:   image.page_number,
@@ -103,11 +130,36 @@ fn main() {
     println!("processed {} images", processed.len());
 
     for image in processed {
-        let mut out_path = in_path.clone();
-        out_path.set_file_name(format!("{}_{}_{}.tiff", file_name, image.page_number, image.object_number));
+        let mut out_path = out_directory.clone();
+        out_path.push(format!("{}_{}_{}.png", file_name, image.page_number, image.object_number));
 
-        println!("would write image to {:?}", out_path.into_os_string());
-        //let file = File::create(out_path)?;
-        //let mut buf_writer = BufWriter::new(file);
+        if !args.dry_run {
+            let file = std::fs::File::create(&out_path).unwrap();
+            let mut writer = std::io::BufWriter::new(file);
+
+            eprintln!(
+                "writing image {} from page {} to {:?}",
+                image.object_number,
+                image.page_number,
+                out_path.into_os_string()
+            );
+
+            image.data.write_with_encoder(
+                image::codecs::png::PngEncoder::new_with_quality(
+                    &mut writer,
+                    image::codecs::png::CompressionType::Fast,
+                    image::codecs::png::FilterType::Adaptive,
+                )
+            );
+        } else {
+            eprintln!(
+                "would write image {} from page {} to {:?}",
+                image.object_number,
+                image.page_number,
+                out_path.into_os_string()
+            );
+        }
     }
+
+    return Ok(());
 }
